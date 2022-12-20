@@ -1,5 +1,6 @@
-from scipy.spatial import distance as dist
 from collections import OrderedDict
+
+from scipy.spatial import distance as dist
 import numpy as np
 import cv2
 
@@ -23,11 +24,14 @@ class CentroidTracker:
         self.disappeared[self.nextObjectID] = 0
         self.parents[self.nextObjectID] = ['none']
         self.data[self.nextObjectID] = []
-        self.data_dict[self.nextObjectID] = [{'frame_id': self.cur_frame,
-                                              'center_xy': centroid,
-                                              'centroid_data': input_data,
-                                              'speed_vector': (0, 0),
-                                              'parent': self.parents[self.nextObjectID]}]
+        self.data_dict[self.nextObjectID] = [
+            {
+                'frame_id': self.cur_frame,
+                'center_xy': centroid,
+                'centroid_data': input_data,
+                'speed_vector': (0, 0),
+                'parent': self.parents[self.nextObjectID],
+            }]
         self.tracked[self.nextObjectID] = 1
         self.objects_vectors_instant[self.nextObjectID] = (0, 0)
         self.nextObjectID += 1
@@ -43,8 +47,10 @@ class CentroidTracker:
                 if self.disappeared[object_id] > self.maxDisappeared:
                     self.unregister(object_id)
             return self.objects
+
         input_centroids = np.zeros((len(bounding_rectangles), 2), dtype="int")
         input_centroids_data = []
+
         for (i, (startX, startY, endX, endY, S, P, contour)) in enumerate(bounding_rectangles):
             center_x = int((startX + endX) / 2.0)
             center_y = int((startY + endY) / 2.0)
@@ -54,6 +60,7 @@ class CentroidTracker:
             hull_area = cv2.contourArea(hull)
             solidity = float(area) / hull_area
             input_centroids_data.append((S, P, contour, solidity))
+
         if len(self.objects) == 0:
             for i in range(0, len(input_centroids)):
                 self.register(input_centroids[i], input_centroids_data[i])
@@ -70,26 +77,33 @@ class CentroidTracker:
                     continue
                 if d[row][col] > 30:
                     continue
+
                 object_id = object_ids[row]
                 new_state = input_centroids[col]
                 prev_state = self.objects[object_id]
                 frame_delay = self.disappeared[object_id]
                 vector_speed = self.calculate_speed(new_state, prev_state, frame_delay)
+
                 self.objects_vectors_instant[object_id] = vector_speed
                 self.tracked[object_id] += 1
                 self.objects[object_id] = new_state
                 self.disappeared[object_id] = 0
                 self.data[object_id] += [(self.cur_frame, self.objects[object_id], input_centroids_data[col],
                                           self.objects_vectors_instant[object_id])]
-                self.data_dict[object_id] += [{'frame_id': self.cur_frame,
-                                               'center_xy': self.objects[object_id],
-                                               'centroid_data': input_centroids_data[col],
-                                               'speed_vector': self.objects_vectors_instant[object_id],
-                                               'parent': self.parents[object_id]}]
+                self.data_dict[object_id] += [
+                    {
+                        'frame_id': self.cur_frame,
+                        'center_xy': self.objects[object_id],
+                        'centroid_data': input_centroids_data[col],
+                        'speed_vector': self.objects_vectors_instant[object_id],
+                        'parent': self.parents[object_id],
+                    }]
                 used_rows.add(row)
                 used_cols.add(col)
+
             unused_rows = set(range(0, d.shape[0])).difference(used_rows)
             unused_cols = set(range(0, d.shape[1])).difference(used_cols)
+
             for row in unused_rows:
                 object_id = object_ids[row]
                 self.disappeared[object_id] += 1
@@ -98,6 +112,7 @@ class CentroidTracker:
             else:
                 for col in unused_cols:
                     self.register(input_centroids[col], input_centroids_data[col])
+
         self.cur_frame = self.cur_frame + 1
         return self.objects, self.objects_vectors_instant
 
