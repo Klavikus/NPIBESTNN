@@ -16,7 +16,7 @@ For install requirements use following command:
 Activate venv:
 
 ```bash
-python -m venv -m venv
+python -m venv venv
 ```
 
 Install deps:
