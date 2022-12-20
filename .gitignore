@@ -157,6 +157,7 @@ cython_debug/
 .idea/
 .vscode/
 
+*.pickle
 /data_for_denoise/*
 !data_for_denoise/.gitkeep
 /models/*
