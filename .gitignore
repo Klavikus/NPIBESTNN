@@ -1,0 +1,5 @@
+/venv/
+/data_for_denoise/
+/models/
+/processing_result/
+.idea/
