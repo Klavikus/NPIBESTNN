@@ -201,6 +201,7 @@ class VideoProcessing:
             plt.imshow(morph_img, cmap="gray")
             plt.axis('off')
             plt.title("morph_img")
+            
             fig.add_subplot(rows, columns, 8)
             plt.imshow(morph_img, cmap="gray")
             plt.axis('off')
@@ -269,6 +270,7 @@ class VideoProcessing:
             area = count
             perimeter = cv2.arcLength(contour, True)
             bounding_rectangles.append((x, y, x + w, y + h, area, perimeter, contour))
+
         self.centroid_tracker.update(bounding_rectangles)
         return valid_contours, img_morph
 
@@ -276,6 +278,7 @@ class VideoProcessing:
         cap = cv2.VideoCapture(self.load_video_path)
         frame_counter = 0
         contours_data_list = []
+        
         while cap.isOpened():
             ret, frame = cap.read()
             if frame is None:
@@ -302,6 +305,7 @@ class VideoProcessing:
             data_dict = self.centroid_tracker.data_dict
             new_objects_id = self.centroid_tracker.objects
             new_objects = get_distinct_objects(prev_objects_id, new_objects_id)
+            
             for item in new_objects.keys():
                 for prev_item in prev_objects_id.keys():
                     prev_item_contour = data_dict[prev_item][len(data_dict[prev_item]) - 2]['centroid_data'][2]
