@@ -7,9 +7,9 @@ import skvideo
 import skvideo.io
 from pathlib import Path
 import pandas as pd
-import nn_denoise
+from settings import Config
 
-from n2v.models import N2VConfig, N2V
+from n2v.models import N2V
 
 cv2_morphology_operation = {
     'erode': lambda x, y: cv2.erode(x, np.ones(y[0], np.uint8), iterations=1),
@@ -32,13 +32,11 @@ def check_overlapping(input_point, start_point, end_point):
 
 
 def mask_roi(img, dx=32, dy=74):
-    """Заплатка"""
     img[0:dx, 0:dy] = 0
     return img
 
 
-def processing_frame(frame, iterations=1):
-    """Обработка кадра - подавление шума, нормализация, фильтрация"""
+def processing_frame(frame):
     source_frame = frame.copy()
     frame = mask_roi(frame)
     # denoise_nn = predict_iter(frame, iterations=iterations)
@@ -71,14 +69,10 @@ def draw_ct_data(frame, res, frame_id, cont_list):
         for objects_data in res[frame_id]:
             obj_id = objects_data[0]
             centroid = objects_data[1]
-            vector = objects_data[3]
             text = f"ID {obj_id}"
             cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
-            # start_point = (centroid[0], centroid[1])
-            # end_point = (int(centroid[0] + vector[0]), int(centroid[1] + vector[1]))
-            # frame = cv2.line(frame, start_point, end_point, (0, 0, 255), 4)
     return frame
 
 
@@ -99,38 +93,36 @@ def set_clean_boundary(img, thickness=4):
 
 class VideoProcessing:
 
-    def __init__(self, sample_name, model_dir, model_name):
-        self.SAMPLE_NAME = sample_name
+    def __init__(self):
+        self.SAMPLE_NAME = Config.SAMPLE_NAME
+        self.LOAD_VIDEO_PATH = f'{Config.SAMPLES_DIRECTORY}/{self.SAMPLE_NAME}.{Config.SAMPLE_EXTENSION}'
+        self.FRAMES_SAVE_PATH = f'{Config.SAVE_FOLDER_PATH}/{self.SAMPLE_NAME}'
+        self.SOURCE_FRAMES_SAVE_PATH = self.FRAMES_SAVE_PATH + '/source'
+        self.DENOISED_FRAMES_SAVE_PATH = self.FRAMES_SAVE_PATH + '/nn_denoise'
+        self.BINARY_FRAMES_SAVE_PATH = self.FRAMES_SAVE_PATH + '/morph'
+        self.RESULT_FRAMES_SAVE_PATH = self.FRAMES_SAVE_PATH + '/contours_gray'
+        self.VIDEO_SAVE_PATH = f"{Config.VIDEO_SAVE_FOLDER_PATH}/{self.SAMPLE_NAME}_compile.mp4"
+        self.model = N2V(None, Config.N2V_MODEL_NAME, basedir=Config.N2V_MODEL_DIR)
         self.centroid_tracker = CentroidTracker()
-        # self.load_video_path = f'data_for_denoise/{self.SAMPLE_NAME}.mov'
-        self.load_video_path = f'data_for_denoise/{self.SAMPLE_NAME}.avi'
-        self.save_path = f'data_for_denoise/frames/{self.SAMPLE_NAME}'
-        self.frames_save_path = self.save_path + '/source'
-        self.denoised_frames_save_path = self.save_path + '/nn_denoise'
-        self.binary_frames_save_path = self.save_path + '/morph'
-        self.result_frames_path = self.save_path + '/contours_gray'
-        self.video_save_path = f"data_for_denoise/video_out/{self.SAMPLE_NAME}_compile.mp4"
-        self.scale_factor = 2
-
-        self.MODEL_DIR = model_dir
-        self.MODEL_NAME = model_name  # 7645
-        self.model = N2V(None, self.MODEL_NAME, basedir=self.MODEL_DIR)
+        self.scale_factor = Config.SCALE_FACTOR
 
     def process(self):
         self.prepare_directories()
         ct_data, contours_list, ct_data_dict = self.get_data_denoised_video()
-        mean_data = get_mean_data(ct_data, 30)
+        mean_data = get_mean_data(ct_data, Config.MEAN_DATA_SAMPLE_RATE)
         inverse_dict = get_inverse_dict(mean_data)
         self.draw_contours_and_save(inverse_dict, contours_list)
         self.save_video_compilation()
-        self.data_to_xlsx(ct_data_dict, 'processing_result/')
+        self.data_to_xlsx(ct_data_dict, f'{Config.XLSX_SAVE_PATH}/')
 
     def prepare_directories(self):
-        save_path = f"./data_for_denoise/frames/{self.SAMPLE_NAME.split('.')[0]}"
+        save_path = f"./{Config.SAVE_FOLDER_PATH}/{self.SAMPLE_NAME}"
         Path(f"{save_path}/source").mkdir(parents=True, exist_ok=True)
         Path(f"{save_path}/nn_denoise").mkdir(parents=True, exist_ok=True)
         Path(f"{save_path}/morph").mkdir(parents=True, exist_ok=True)
         Path(f"{save_path}/contours_gray").mkdir(parents=True, exist_ok=True)
+        Path(f"{Config.XLSX_SAVE_PATH}").mkdir(parents=True, exist_ok=True)
+        Path(f"{Config.VIDEO_SAVE_FOLDER_PATH}").mkdir(parents=True, exist_ok=True)
 
     def binaryzation(self, img, ops_for_img, filters_params, debug_view=False, base_image=None):
 
@@ -201,7 +193,7 @@ class VideoProcessing:
             plt.imshow(morph_img, cmap="gray")
             plt.axis('off')
             plt.title("morph_img")
-            
+
             fig.add_subplot(rows, columns, 8)
             plt.imshow(morph_img, cmap="gray")
             plt.axis('off')
@@ -214,42 +206,47 @@ class VideoProcessing:
         img_uint8 = np.uint8(img)
         nn_predict = np.uint8(self.model.predict(img_uint8, axes="YX"))
 
-        # dst = cv2.fastNlMeansDenoising(img, 1, 3, None, 4, 7, 15)
-        nlm = cv2.fastNlMeansDenoising(nn_predict, h=3, templateWindowSize=37, searchWindowSize=15)
+        nlm = cv2.fastNlMeansDenoising(nn_predict,
+                                       h=Config.NLM_H,
+                                       templateWindowSize=Config.NLM_TEMPLATE_WINDOW_SIZE,
+                                       searchWindowSize=Config.NLM_TEMPLATE_WINDOW_SIZE)
 
-        img_bilateral = cv2.bilateralFilter(nlm, 11, 35, 35)
-        img_median = cv2.medianBlur(img_bilateral, 5)
-        img_binary = binary_segmentation(img_median, 122, 150, 255)
+        img_bilateral = cv2.bilateralFilter(nlm,
+                                            Config.BILATERAL_D,
+                                            Config.BILATERAL_SIGMA_COLOR,
+                                            Config.BILATERAL_SIGMA_SPACE)
 
-        # (T, img_binary) = cv2.threshold(img_median, 0, 255,
-        #                                cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        img_median = cv2.medianBlur(img_bilateral, Config.MEDIAN_K)
 
-        ops_for_img = {
-            # 'erode': ((3, 3), 1),
-            'open': ((3, 3), 1),
-            # 'close': ((7, 7), 1),
-        }
+        if Config.USE_ADAPTIVE:
+            (T, img_binary) = cv2.threshold(img_median, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        else:
+            img_binary = binary_segmentation(img_median, Config.BINARY_THRESHOLD_MIN, Config.BINARY_THRESHOLD_MAX, 255)
+
+        ops_for_img = Config.MORPH_OPERATIONS
+
         img_morph = cv_op(img_binary, ops_for_img)
         img_morph = set_clean_boundary(img_morph)
-        img_morph = cv2.GaussianBlur(img_morph, (13, 13), 0)
+        img_morph = cv2.GaussianBlur(img_morph, Config.GAUSSIAN_K, 0)
+
         contours, hierarchy = cv2.findContours(img_morph, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         approx_contours = []
         for cnt in contours:
-            epsilon = 0.0001 * cv2.arcLength(cnt, True)
+            epsilon = Config.CONTOUR_EPSILON * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
             approx_contours.append(approx)
         valid_contours = []
         new_hierarchy = []
         mask_holes = np.zeros(img_morph.shape[:2], np.uint8)
         for i, contour in enumerate(approx_contours):
-            if len(contour) > 5 and cv2.contourArea(contour) > 2 * 190:
+            if len(contour) > Config.CONTOUR_MIN_LENGTH and cv2.contourArea(contour) > Config.CONTOUR_MIN_AREA:
                 area = cv2.contourArea(contour)
                 hull = cv2.convexHull(contour)
                 hull_area = cv2.contourArea(hull)
                 solidity = float(area) / hull_area
                 if hierarchy[0][i][3] != -1:
                     cv2.drawContours(mask_holes, [contour], -1, 255, -1)
-                if hierarchy[0][i][3] != -1 or solidity <= 0.12:
+                if hierarchy[0][i][3] != -1 or solidity <= Config.CONTOUR_MIN_SOLIDITY:
                     continue
                 contour_moments = cv2.moments(contour)
                 center_x = int(contour_moments["m10"] / contour_moments["m00"])
@@ -275,10 +272,10 @@ class VideoProcessing:
         return valid_contours, img_morph
 
     def get_data_denoised_video(self):
-        cap = cv2.VideoCapture(self.load_video_path)
+        cap = cv2.VideoCapture(self.LOAD_VIDEO_PATH)
         frame_counter = 0
         contours_data_list = []
-        
+
         while cap.isOpened():
             ret, frame = cap.read()
             if frame is None:
@@ -289,23 +286,23 @@ class VideoProcessing:
             frame = cv2.resize(frame, (0, 0), fx=self.scale_factor, fy=self.scale_factor)
 
             # Denoise
-            processed_frame, source_frame = processing_frame(frame.astype('float32') / 255, iterations=1)
+            processed_frame, source_frame = processing_frame(frame.astype('float32') / 255)
 
             # Binarization
             contours_data, frame_binary = self.find_contours_only((processed_frame * 255).astype('uint8'))
             contours_data_list.append(contours_data)
 
             # SavingMidData
-            save_frame_as_tif(frame_counter, source_frame, self.frames_save_path)
-            save_frame_as_tif(frame_counter, processed_frame, self.denoised_frames_save_path)
-            save_frame_as_tif(frame_counter, frame_binary, self.binary_frames_save_path)
+            save_frame_as_tif(frame_counter, source_frame, self.SOURCE_FRAMES_SAVE_PATH)
+            save_frame_as_tif(frame_counter, processed_frame, self.DENOISED_FRAMES_SAVE_PATH)
+            save_frame_as_tif(frame_counter, frame_binary, self.BINARY_FRAMES_SAVE_PATH)
 
             # Tracking
             prev_objects_id = self.centroid_tracker.objects.copy()
             data_dict = self.centroid_tracker.data_dict
             new_objects_id = self.centroid_tracker.objects
             new_objects = get_distinct_objects(prev_objects_id, new_objects_id)
-            
+
             for item in new_objects.keys():
                 for prev_item in prev_objects_id.keys():
                     prev_item_contour = data_dict[prev_item][len(data_dict[prev_item]) - 2]['centroid_data'][2]
@@ -324,7 +321,7 @@ class VideoProcessing:
         return self.centroid_tracker.data, contours_data_list, self.centroid_tracker.data_dict
 
     def draw_contours_and_save(self, result_dict, cont_list):
-        cap = cv2.VideoCapture(self.load_video_path)
+        cap = cv2.VideoCapture(self.LOAD_VIDEO_PATH)
         frame_counter = 0
         while cap.isOpened:
             ret, frame = cap.read()
@@ -332,19 +329,19 @@ class VideoProcessing:
                 break
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)[:-36, :]
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            frame = cv2.resize(frame, (0, 0), fx=2, fy=2)
+            frame = cv2.resize(frame, (0, 0), fx=self.scale_factor, fy=self.scale_factor)
             frame = draw_ct_data(frame, result_dict, frame_counter, cont_list)
-            save_frame_as_tif(frame_counter, frame, self.result_frames_path)
+            save_frame_as_tif(frame_counter, frame, self.RESULT_FRAMES_SAVE_PATH)
             frame_counter += 1
 
         cap.release()
 
     def save_video_compilation(self):
-        fps = str(29.97)
+        fps = Config.OUT_VIDEO_FPS
         input_params = {'-r': fps, }
         output_params = {'-r': fps, '-vcodec': 'libx264', '-crf': '0'}
-        writer = skvideo.io.FFmpegWriter(self.video_save_path, inputdict=input_params, outputdict=output_params)
-        cap = cv2.VideoCapture(self.load_video_path)
+        writer = skvideo.io.FFmpegWriter(self.VIDEO_SAVE_PATH, inputdict=input_params, outputdict=output_params)
+        cap = cv2.VideoCapture(self.LOAD_VIDEO_PATH)
         frame_counter = 0
 
         while cap.isOpened:
@@ -353,14 +350,14 @@ class VideoProcessing:
                 break
             frame_1 = frame[:-36, :]
 
-            frame_2 = cv2.imread(f'{self.denoised_frames_save_path}/frame_{frame_counter}.jpg')
-            frame_2 = cv2.resize(frame_2, (0, 0), fx=0.5, fy=0.5)
+            frame_2 = cv2.imread(f'{self.DENOISED_FRAMES_SAVE_PATH}/frame_{frame_counter}.jpg')
+            frame_2 = cv2.resize(frame_2, (0, 0), fx=1 / self.scale_factor, fy=1 / self.scale_factor)
 
-            frame_3 = cv2.imread(f'{self.binary_frames_save_path}/frame_{frame_counter}.jpg')
-            frame_3 = cv2.resize(frame_3, (0, 0), fx=0.5, fy=0.5)
+            frame_3 = cv2.imread(f'{self.BINARY_FRAMES_SAVE_PATH}/frame_{frame_counter}.jpg')
+            frame_3 = cv2.resize(frame_3, (0, 0), fx=1 / self.scale_factor, fy=1 / self.scale_factor)
 
-            frame_4 = cv2.imread(f'{self.result_frames_path}/frame_{frame_counter}.jpg')
-            frame_4 = cv2.resize(frame_4, (0, 0), fx=0.5, fy=0.5)
+            frame_4 = cv2.imread(f'{self.RESULT_FRAMES_SAVE_PATH}/frame_{frame_counter}.jpg')
+            frame_4 = cv2.resize(frame_4, (0, 0), fx=1 / self.scale_factor, fy=1 / self.scale_factor)
 
             temp_img_row_1 = np.concatenate((frame_1, frame_2), axis=1)
             temp_img_row_2 = np.concatenate((frame_3, frame_4), axis=1)
